@@ -1,9 +1,8 @@
 from django.contrib import admin
 
-from .models import Product, Lesson, LessonHistory
+from proj.app_product.models import Product, Lesson, LessonHistory
 
 # Register your models here.
-
-@admin.register(Product, Lesson, LessonHistory)
-class PersonAdmin(admin.ModelAdmin):
-    pass
+admin.site.register(Product)
+admin.site.register(Lesson)
+admin.site.register(LessonHistory)

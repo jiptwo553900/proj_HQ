@@ -1,91 +1,61 @@
 from django.contrib.auth.models import User
-from rest_framework import viewsets, permissions
+from rest_framework import generics, viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from proj.app_product.models import (
-    Product,
-    Lesson,
-    LessonHistory,
-)
-from proj.app_api.serializers import (
-    UserSerializer,
-    ProductSerializer,
-    LessonSerializer,
-    LessonHistorySerializer,
-)
+from proj.app_product.models import Product, Lesson, LessonHistory
+from proj.app_api.serializers import UserSerializer, ProductSerializer, LessonSerializer, LessonHistorySerializer, ProductSerializerShort
 
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    API endpoint for users.
-    """
-    queryset = User.objects.all().order_by('-date_joined')
+    queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    @action(detail=True)
-    def user_lessons(self, request, pk=None):
-        return Response(data={'test': 'test'})
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint for products.
-    """
-    queryset = Product.objects.none()
+    queryset = Product.objects.all()
     serializer_class = ProductSerializer
+    permission_classes = [permissions.IsAdminUser]
 
-    def get_permissions(self):
-        if self.action == 'create':
-            self.permission_classes = [permissions.IsAdminUser]
-        else:
-            self.permission_classes = [permissions.IsAuthenticated]
-
-        return super(ProductViewSet, self).get_permissions()
-
-    def get_queryset(self):
-        current_user = self.request.user
-        if current_user.is_superuser:
-            return Product.objects.all()
-
-        return Product.objects.filter(customers=current_user).order_by('id')
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
 
 
 class LessonViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint for lessons.
-    """
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
-
-    def get_permissions(self):
-        if self.action == 'create':
-            self.permission_classes = [permissions.IsAdminUser]
-        else:
-            self.permission_classes = [permissions.IsAuthenticated]
-
-        return super(LessonViewSet, self).get_permissions()
+    permission_classes = [permissions.IsAdminUser]
 
 
 class LessonHistoryViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint for lessons history.
-    """
-    queryset = LessonHistory.objects.none()
+    queryset = LessonHistory.objects.all()
     serializer_class = LessonHistorySerializer
+    permission_classes = [permissions.IsAdminUser]
 
-    def get_permissions(self):
-        if self.action == 'create':
-            self.permission_classes = [permissions.IsAdminUser]
-        else:
-            self.permission_classes = [permissions.IsAuthenticated]
+    def perform_create(self, serializer):
+        viewed_time = self.request.data.get('viewed_time')
+        lesson = Lesson.objects.get(id=self.request.data.get('lesson'))
+        serializer.save(is_viewed=float(viewed_time) >= lesson.duration_seconds * 0.8)
 
-        return super(LessonHistoryViewSet, self).get_permissions()
+
+class LessonsDetailsForUser(viewsets.ReadOnlyModelViewSet):
+    queryset = LessonHistory.objects.none()
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = LessonHistorySerializer
 
     def get_queryset(self):
         current_user = self.request.user
-        if current_user.is_superuser:
-            return LessonHistory.objects.all()
+        products = Product.objects.filter(bought_by=current_user)
+        lessons = Lesson.objects.filter(products__in=products)
+        qs = LessonHistory.objects.filter(user=current_user, lesson__in=lessons)
+        return qs
 
-        return LessonHistory.objects.filter(user=current_user).order_by('-last_viewed_at')
+class ProductDetailsForUser(viewsets.ReadOnlyModelViewSet):
+    queryset = Product.objects.none()
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ProductSerializerShort
+
+    def get_queryset(self):
+        current_user = self.request.user
+        products = Product.objects.filter(bought_by=current_user)
+        return products

@@ -1,2 +1,3 @@
-admin username: jiptwo
-admin password: q1w2e3r4
+- admin username: jiptwo
+- admin password: q1w2e3r4
+- all users` passwords: q1w2e3r4

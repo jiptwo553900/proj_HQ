@@ -1,61 +1,85 @@
 from django.contrib.auth.models import User
-from rest_framework import generics, viewsets, permissions
-from rest_framework.decorators import action
-from rest_framework.response import Response
+from django.db.models import FilteredRelation, Q, F, Count, OuterRef, Sum
+from rest_framework import viewsets, mixins, permissions, exceptions
 
-from proj.app_product.models import Product, Lesson, LessonHistory
-from proj.app_api.serializers import UserSerializer, ProductSerializer, LessonSerializer, LessonHistorySerializer, ProductSerializerShort
-
-
-class UserViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
+from proj.app_api.serializers import UserLessonsSerializer, UserLessonsByProductSerializer, ProductStatisticsSerializer
+from proj.app_product.models import ProductAccess, Lesson, Product, LessonHistory
 
 
-class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
-    serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAdminUser]
-
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
-
-
-class LessonViewSet(viewsets.ModelViewSet):
-    queryset = Lesson.objects.all()
-    serializer_class = LessonSerializer
-    permission_classes = [permissions.IsAdminUser]
-
-
-class LessonHistoryViewSet(viewsets.ModelViewSet):
-    queryset = LessonHistory.objects.all()
-    serializer_class = LessonHistorySerializer
-    permission_classes = [permissions.IsAdminUser]
-
-    def perform_create(self, serializer):
-        viewed_time = self.request.data.get('viewed_time')
-        lesson = Lesson.objects.get(id=self.request.data.get('lesson'))
-        serializer.save(is_viewed=float(viewed_time) >= lesson.duration_seconds * 0.8)
-
-
-class LessonsDetailsForUser(viewsets.ReadOnlyModelViewSet):
-    queryset = LessonHistory.objects.none()
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = LessonHistorySerializer
+class UserLessonsViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
+    serializer_class = UserLessonsSerializer
+    permission_classes = (permissions.IsAuthenticated, )
 
     def get_queryset(self):
         current_user = self.request.user
-        products = Product.objects.filter(bought_by=current_user)
-        lessons = Lesson.objects.filter(products__in=products)
-        qs = LessonHistory.objects.filter(user=current_user, lesson__in=lessons)
+        accesses = ProductAccess.objects.filter(user=current_user)
+
+        qs = Lesson.objects.filter(
+            products__in=accesses.values('product_id')
+        ).alias(
+            details=FilteredRelation(
+                relation_name='history',
+                condition=Q(history__user=current_user)
+            )
+        ).annotate(
+            is_viewed=F('details__is_viewed'),
+            viewed_time=F('details__viewed_time')
+        )
+
         return qs
 
-class ProductDetailsForUser(viewsets.ReadOnlyModelViewSet):
-    queryset = Product.objects.none()
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = ProductSerializerShort
+
+class UserLessonsByProductViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
+    serializer_class = UserLessonsByProductSerializer
+    permission_classes = (permissions.IsAuthenticated, )
 
     def get_queryset(self):
         current_user = self.request.user
-        products = Product.objects.filter(bought_by=current_user)
-        return products
+        accesses = ProductAccess.objects.filter(user=current_user)
+        product_id = self.kwargs['product_id']
+
+        if not (product_id in accesses.values_list('product_id', flat=True)):
+            raise exceptions.NotFound
+
+        qs = Lesson.objects.filter(
+            products=product_id
+        ).alias(
+            details=FilteredRelation(
+                relation_name='history',
+                condition=Q(history__user=current_user)
+            )
+        ).annotate(
+            is_viewed=F('details__is_viewed'),
+            viewed_time=F('details__viewed_time'),
+            last_viewed=F('details__last_viewed')
+        )
+
+        return qs
+
+
+class ProductStatisticsViewSet(viewsets.GenericViewSet, mixins.ListModelMixin):
+    serializer_class = ProductStatisticsSerializer
+    permission_classes = (permissions.IsAdminUser, )
+
+    def get_queryset(self):
+        qs = Product.objects.all().annotate(
+            total_lessons_viewed=Count(
+                LessonHistory.objects.filter(
+                    lesson__products=OuterRef('id'),
+                    is_viewed=True
+                ).values('id')
+            ),
+            total_view_time=Sum(
+                LessonHistory.objects.filter(
+                    lesson__products=OuterRef('id')
+                ).values('viewed_time')
+            ),
+            total_users_have_access_count=Count(
+                ProductAccess.objects.filter(
+                    product_id=OuterRef('id')
+                ).values('id')
+            ),
+            purchase_percent=F('total_users_have_access_count') / float(User.objects.all().count()) * 100
+        )
+
+        return qs

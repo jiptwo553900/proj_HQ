@@ -18,13 +18,11 @@ from django.contrib import admin
 from django.urls import path, include
 from django.views.generic.base import RedirectView
 
-from proj.app_api import urls as api_urls
-
 
 urlpatterns = [
     path('', RedirectView.as_view(url='api/')),  # TODO must be changed to index
     path('admin/', admin.site.urls),
     path('api_auth/', include('rest_framework.urls', namespace='rest_framework')),
 
-    path('api/', include(api_urls))
+    path('api/', include('proj.app_api.urls'))
 ]
